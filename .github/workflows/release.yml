@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - 'v*' # Triggers automatically on git tags (e.g., v0.5.2)
+  workflow_dispatch: # Enables the "Run workflow" button manually in GitHub Actions UI
 
 jobs:
   build-tarball:
