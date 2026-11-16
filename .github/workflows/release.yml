@@ -43,48 +43,25 @@ jobs:
       - name: Install Rust Stable
         uses: dtolnay/rust-toolchain@stable
 
-      # Find where Cargo.toml is located and set up working directory automatically
-      - name: Locate Project Directory
-        id: find_cargo
-        run: |
-          CARGO_DIR=$(find . -name "Cargo.toml" -maxdepth 2 -not -path "*/.*" | xargs dirname | head -n 1)
-          if [ "$CARGO_DIR" = "." ] || [ -z "$CARGO_DIR" ]; then
-            echo "CARGO_PATH=." >> $GITHUB_ENV
-            echo "Found Cargo.toml at root"
-          else
-            # Strip leading ./
-            CARGO_PATH="${CARGO_DIR#./}"
-            echo "CARGO_PATH=$CARGO_PATH" >> $GITHUB_ENV
-            echo "Found Cargo.toml in subdirectory: $CARGO_PATH"
-          fi
-
       - name: Cache Rust Build Artifacts
         uses: Swatinem/rust-cache@v2
-        with:
-          workdir: "${{ env.CARGO_PATH }}"
 
       - name: Build Release Binaries
-        working-directory: "${{ env.CARGO_PATH }}"
         run: |
           cargo build --release
 
       - name: Prepare Release Asset Bundle
         env:
           PKGVER: ${{ env.PKGVER }}
-          CARGO_PATH: ${{ env.CARGO_PATH }}
         run: |
           BUNDLE_DIR="MisterDownloadManager-${PKGVER}-linux-x86_64"
           mkdir -p "$BUNDLE_DIR"
 
-          # Resolve target path dynamically depending on whether it's in root or a subfolder
-          TARGET_DIR="${CARGO_PATH}/target/release"
-          [[ "$CARGO_PATH" == "." ]] && TARGET_DIR="target/release"
-
           # Copy core binaries
-          cp "$TARGET_DIR/misterdownloadmanager" "$BUNDLE_DIR/"
-          [[ -f "$TARGET_DIR/misterdownloadmanager-nmhost" ]] && cp "$TARGET_DIR/misterdownloadmanager-nmhost" "$BUNDLE_DIR/"
+          cp target/release/misterdownloadmanager "$BUNDLE_DIR/"
+          [[ -f "target/release/misterdownloadmanager-nmhost" ]] && cp "target/release/misterdownloadmanager-nmhost" "$BUNDLE_DIR/"
 
-          # Copy browser extensions and docs from repo root if they exist
+          # Copy browser extensions and docs if they exist
           [[ -d "extension-chromium" ]] && cp -r extension-chromium "$BUNDLE_DIR/"
           [[ -f "mdm-firefox.xpi" ]] && cp mdm-firefox.xpi "$BUNDLE_DIR/"
           [[ -f "LICENSE" ]] && cp LICENSE "$BUNDLE_DIR/"
