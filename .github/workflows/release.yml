@@ -67,7 +67,7 @@ package() {
     install -Dm755 target/release/misterdownloadmanager "\${pkgdir}/opt/misterdownloadmanager/misterdownloadmanager"
     [[ -f target/release/misterdownloadmanager-nmhost ]] && install -Dm755 target/release/misterdownloadmanager-nmhost "\${pkgdir}/opt/misterdownloadmanager/misterdownloadmanager-nmhost"
 
-    # Symlink 'idm' and 'misterdownloadmanager' to /usr/bin
+    # Symlink "idm" and "misterdownloadmanager" to /usr/bin
     ln -s "/opt/misterdownloadmanager/misterdownloadmanager" "\${pkgdir}/usr/bin/idm"
     ln -s "/opt/misterdownloadmanager/misterdownloadmanager" "\${pkgdir}/usr/bin/misterdownloadmanager"
 
