@@ -4,7 +4,7 @@ on:
   push:
     tags:
       - 'v*' # Triggers automatically on git tags (e.g., v0.5.2)
-  workflow_dispatch: # Enables the "Run workflow" button manually in GitHub Actions UI
+  workflow_dispatch: # Enables manual triggering from the GitHub Actions tab
 
 jobs:
   build-tarball:
@@ -45,10 +45,14 @@ jobs:
 
       - name: Cache Rust Build Artifacts
         uses: Swatinem/rust-cache@v2
+        # Uncomment and adjust if Cargo.toml is in a subfolder:
+        # with:
+        #   workdir: "path-to-subfolder"
 
       - name: Build Release Binaries
         run: |
           cargo build --release
+          # If your Cargo.toml is in a subfolder, add: working-directory: "path-to-subfolder"
 
       - name: Prepare Release Asset Bundle
         env:
@@ -57,7 +61,7 @@ jobs:
           BUNDLE_DIR="MisterDownloadManager-${PKGVER}-linux-x86_64"
           mkdir -p "$BUNDLE_DIR"
 
-          # Copy core binaries
+          # Copy core binaries (adjust paths if built inside a subfolder)
           cp target/release/misterdownloadmanager "$BUNDLE_DIR/"
           [[ -f "target/release/misterdownloadmanager-nmhost" ]] && cp target/release/misterdownloadmanager-nmhost "$BUNDLE_DIR/"
 
