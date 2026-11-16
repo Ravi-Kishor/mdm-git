@@ -1,0 +1,209 @@
+name: Build Arch Package & Release
+
+on:
+  push:
+    tags:
+      - 'v*' # Triggers automatically on git tags (e.g., v0.5.2)
+
+jobs:
+  build-arch-package:
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Build Dependencies
+        run: |
+          pacman -Syu --noconfirm base-devel git rust cargo cmake webkit2gtk-4.1 libayatana-appindicator librsvg jq
+
+      - name: Prepare Build Environment & PKGBUILD
+        run: |
+          # Create a non-root build user (makepkg refuses to run as root)
+          useradd -m builder
+          echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+          chown -R builder:builder .
+          su builder -c 'git config --global --add safe.directory "$PWD"'
+
+      - name: Build Package via makepkg
+        run: |
+          su builder -c '
+            # Extract git version for PKGBUILD pkgver
+            GIT_DESCRIBE=$(git describe --tags --always | sed "s/^v//")
+            PKGVER=$(echo "$GIT_DESCRIBE" | sed "s/-/./g; s/-/r/")
+            
+            # Generate PKGBUILD dynamically with all customizations
+            cat <<EOF > PKGBUILD
+pkgname=misterdownloadmanager-bin
+pkgver=${PKGVER}
+pkgrel=1
+pkgdesc="IDM (MisterDownloadManager) - Modern download manager"
+arch=("x86_64")
+url="https://github.com/${{ github.repository }}"
+license=("custom")
+depends=("gtk3" "webkit2gtk-4.1" "libayatana-appindicator" "hicolor-icon-theme")
+makedepends=("rust" "cargo" "cmake" "librsvg")
+provides=("misterdownloadmanager" "idm")
+conflicts=("misterdownloadmanager")
+options=("!strip")
+source=()
+sha256sums=()
+
+build() {
+    cargo build --release
+}
+
+package() {
+    # Install core binary & nmhost helper
+    install -dm755 "\${pkgdir}/opt/misterdownloadmanager"
+    install -dm755 "\${pkgdir}/usr/bin"
+    
+    install -Dm755 target/release/misterdownloadmanager "\${pkgdir}/opt/misterdownloadmanager/misterdownloadmanager"
+    [[ -f target/release/misterdownloadmanager-nmhost ]] && install -Dm755 target/release/misterdownloadmanager-nmhost "\${pkgdir}/opt/misterdownloadmanager/misterdownloadmanager-nmhost"
+
+    # Symlink 'idm' and 'misterdownloadmanager' to /usr/bin
+    ln -s "/opt/misterdownloadmanager/misterdownloadmanager" "\${pkgdir}/usr/bin/idm"
+    ln -s "/opt/misterdownloadmanager/misterdownloadmanager" "\${pkgdir}/usr/bin/misterdownloadmanager"
+
+    # Install custom SVG vector icon
+    install -dm755 "\${pkgdir}/usr/share/icons/hicolor/scalable/apps"
+    install -dm755 "\${pkgdir}/usr/share/pixmaps"
+
+    cat << "ICON" > "\${pkgdir}/usr/share/icons/hicolor/scalable/apps/idm.svg"
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="40 30 445 450" width="512" height="512">
+  <defs>
+    <radialGradient id="dropGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="65%" stop-color="#000000" stop-opacity="0.35"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="globeSphere" cx="34%" cy="25%" r="72%" fx="30%" fy="22%">
+      <stop offset="0%" stop-color="#8CE3FF"/>
+      <stop offset="28%" stop-color="#35AEFF"/>
+      <stop offset="68%" stop-color="#0B78E3"/>
+      <stop offset="100%" stop-color="#04489C"/>
+    </radialGradient>
+    <linearGradient id="globeGloss" x1="18%" y1="8%" x2="68%" y2="72%">
+      <stop offset="0%" stop-color="#D4F2FF" stop-opacity="0.96"/>
+      <stop offset="55%" stop-color="#6BCAFF" stop-opacity="0.88"/>
+      <stop offset="100%" stop-color="#2FA4F7" stop-opacity="0.75"/>
+    </linearGradient>
+    <linearGradient id="oceanWave" x1="15%" y1="0%" x2="90%" y2="100%">
+      <stop offset="0%" stop-color="#1E8CF2"/>
+      <stop offset="100%" stop-color="#38A3FF"/>
+    </linearGradient>
+    <linearGradient id="bandBlue" x1="0%" y1="15%" x2="85%" y2="95%">
+      <stop offset="0%" stop-color="#1574CC"/>
+      <stop offset="100%" stop-color="#0A4E96"/>
+    </linearGradient>
+    <linearGradient id="bandGreen" x1="0%" y1="10%" x2="85%" y2="95%">
+      <stop offset="0%" stop-color="#48DB42"/>
+      <stop offset="55%" stop-color="#28B62C"/>
+      <stop offset="100%" stop-color="#169222"/>
+    </linearGradient>
+    <linearGradient id="bandYellow" x1="0%" y1="10%" x2="85%" y2="90%">
+      <stop offset="0%" stop-color="#FFDF38"/>
+      <stop offset="55%" stop-color="#F7C116"/>
+      <stop offset="100%" stop-color="#E59B08"/>
+    </linearGradient>
+    <linearGradient id="bandOrange" x1="10%" y1="10%" x2="80%" y2="90%">
+      <stop offset="0%" stop-color="#FF621A"/>
+      <stop offset="100%" stop-color="#E63910"/>
+    </linearGradient>
+    <linearGradient id="bandRed" x1="15%" y1="10%" x2="85%" y2="90%">
+      <stop offset="0%" stop-color="#EA2222"/>
+      <stop offset="100%" stop-color="#B81218"/>
+    </linearGradient>
+    <linearGradient id="arrowTopFacet" x1="0%" y1="15%" x2="95%" y2="75%">
+      <stop offset="0%" stop-color="#22B22A"/>
+      <stop offset="48%" stop-color="#3CD643"/>
+      <stop offset="100%" stop-color="#62EB67"/>
+    </linearGradient>
+    <linearGradient id="arrowBottomFacet" x1="10%" y1="20%" x2="95%" y2="75%">
+      <stop offset="0%" stop-color="#116E19"/>
+      <stop offset="60%" stop-color="#1B9625"/>
+      <stop offset="100%" stop-color="#2BC235"/>
+    </linearGradient>
+    <linearGradient id="arrowLeftFacet" x1="15%" y1="5%" x2="85%" y2="95%">
+      <stop offset="0%" stop-color="#13781B"/>
+      <stop offset="100%" stop-color="#0B4F10"/>
+    </linearGradient>
+  </defs>
+  <g>
+    <path d="M 205,143 C 112,148 56,218 56,294 C 56,374 128,430 264,412 L 272,296 C 182,306 154,274 154,236 C 154,200 180,174 222,172 Z" fill="url(#bandBlue)"/>
+    <path d="M 205,143 C 118,148 64,212 65,280 C 66,352 136,400 266,386 L 272,296 C 182,306 154,274 154,236 C 154,200 180,174 222,172 Z" fill="url(#bandGreen)"/>
+    <path d="M 205,143 C 126,149 82,204 84,264 C 86,326 146,368 268,358 L 272,296 C 182,306 154,274 154,236 C 154,200 180,174 222,172 Z" fill="url(#bandYellow)"/>
+    <path d="M 206,145 C 138,152 104,198 106,250 C 108,304 156,340 270,332 L 272,296 C 182,306 154,274 154,236 C 154,200 180,174 222,172 Z" fill="url(#bandOrange)"/>
+    <path d="M 208,150 C 152,158 124,196 126,240 C 128,286 168,318 271,314 L 272,296 C 182,306 154,274 154,236 C 154,200 180,174 222,172 Z" fill="url(#bandRed)"/>
+  </g>
+  <g>
+    <circle cx="308" cy="203" r="148" fill="url(#dropGlow)"/>
+    <circle cx="315" cy="195" r="142" fill="url(#globeSphere)"/>
+    <path d="M 266,328 C 312,300 365,284 429,280 A 142,142 0 0 1 266,328 Z" fill="url(#oceanWave)" opacity="0.88"/>
+    <path d="M 339,55 C 315,65 292,72 288,80 C 284,88 310,82 325,94 C 340,106 336,126 320,126 C 304,126 292,108 282,118 C 272,128 278,150 296,164 C 314,178 312,202 294,224 C 276,246 266,272 246,268 C 226,264 212,248 192,258 C 184,262 179,268 176,275 A 142,142 0 0 1 339,55 Z" fill="url(#globeGloss)"/>
+    <circle cx="315" cy="195" r="140.5" fill="none" stroke="#B8ECFF" stroke-width="2.5" opacity="0.35"/>
+  </g>
+  <g stroke-linejoin="round">
+    <polygon points="217,261 461,343 249,469" fill="#001400" opacity="0.28"/>
+    <polygon points="222,254 466,336 286,356" fill="url(#arrowTopFacet)"/>
+    <polygon points="286,356 466,336 254,462" fill="url(#arrowBottomFacet)"/>
+    <polygon points="222,254 286,356 254,462" fill="url(#arrowLeftFacet)"/>
+    <line x1="222" y1="254" x2="286" y2="356" stroke="#7BFF7E" stroke-width="1.5" stroke-linecap="round" opacity="0.55"/>
+    <line x1="286" y1="356" x2="466" y2="336" stroke="#88FF8B" stroke-width="1.5" stroke-linecap="round" opacity="0.65"/>
+  </g>
+</svg>
+ICON
+
+    ln -s "/usr/share/icons/hicolor/scalable/apps/idm.svg" "\$pkgdir/usr/share/icons/hicolor/scalable/apps/misterdownloadmanager.svg"
+    ln -s "/usr/share/icons/hicolor/scalable/apps/idm.svg" "\$pkgdir/usr/share/pixmaps/idm.svg"
+    ln -s "/usr/share/icons/hicolor/scalable/apps/idm.svg" "\$pkgdir/usr/share/pixmaps/misterdownloadmanager.svg"
+
+    # Install browser extensions & extras if present
+    [[ -d extension-chromium ]] && cp -r extension-chromium "\$pkgdir/usr/share/misterdownloadmanager/"
+    [[ -f mdm-firefox.xpi ]] && install -Dm644 mdm-firefox.xpi "\$pkgdir/usr/share/misterdownloadmanager/mdm-firefox.xpi"
+    [[ -f LICENSE ]] && install -Dm644 LICENSE "\$pkgdir/usr/share/licenses/\$pkgname/LICENSE"
+    [[ -f ATTRIBUTION.md ]] && install -Dm644 ATTRIBUTION.md "\$pkgdir/usr/share/doc/\$pkgname/ATTRIBUTION.md"
+
+    # Install optimized Wayland desktop entry
+    install -dm755 "\$pkgdir/usr/share/applications"
+    cat << "DESKTOP" > "\$pkgdir/usr/share/applications/idm.desktop"
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=IDM
+GenericName=MisterDownloadManager
+Comment=Fast & Modern Download Manager
+Exec=/usr/bin/idm --ozone-platform=wayland --enable-features=WaylandWindowDecorations %u
+TryExec=/usr/bin/idm
+Icon=idm
+Terminal=false
+Categories=Network;FileTransfer;
+Keywords=idm;download;manager;misterdownloadmanager;
+StartupWMClass=misterdownloadmanager
+StartupNotify=true
+DESKTOP
+}
+EOF
+            makepkg -s --noconfirm
+          '
+
+      - name: Find and Tag Built Package
+        id: package_info
+        run: |
+          PKG_FILE=$(find . -maxdepth 1 -name "*.pkg.tar.zst" | head -n 1)
+          echo "PKG_FILE=$PKG_FILE" >> $GITHUB_ENV
+          echo "Built package: $PKG_FILE"
+
+      - name: Create GitHub Release and Upload Arch Package
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ env.PKG_FILE }}
+          generate_release_notes: true
+          draft: false
+          prerelease: false
