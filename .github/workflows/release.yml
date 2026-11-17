@@ -8,6 +8,8 @@ on:
       - "docs/**"
       - "**/*.md"
   workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * *' # Triggers automatically every day at midnight UTC
 
 # Required to allow the workflow to create and upload to GitHub Releases
 permissions:
@@ -15,8 +17,17 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  # Force x86-64-v3 instructions, max optimization, Link Time Optimization, single codegen unit, and abort on panic for minimum size.
-  RUSTFLAGS: "-C target-cpu=x86-64-v3 -C opt-level=3 -C lto=fat -C codegen-units=1 -C panic=abort"
+  
+  # Only apply the target architecture via RUSTFLAGS
+  RUSTFLAGS: "-C target-cpu=x86-64-v3"
+  
+  # Apply LTO, single codegen unit, and panic=abort via Cargo release profile overrides
+  # This prevents them from breaking proc-macros and build scripts
+  CARGO_PROFILE_RELEASE_LTO: "fat"
+  CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "1"
+  CARGO_PROFILE_RELEASE_PANIC: "abort"
+  CARGO_PROFILE_RELEASE_OPT_LEVEL: "3"
+  
   # Ensure any C/C++ build dependencies are also fully optimized for x86-64-v3
   CFLAGS: "-march=x86-64-v3 -O3"
   CXXFLAGS: "-march=x86-64-v3 -O3"
@@ -25,7 +36,6 @@ jobs:
   build-linux-generic:
     name: Build Linux tar.gz (x86-64-v3)
     runs-on: ubuntu-latest
-    # Increased timeout to 90 minutes because lto=fat and codegen-units=1 make the build process significantly longer
     timeout-minutes: 90
 
     steps:
@@ -60,7 +70,6 @@ jobs:
         run: cargo build --release
 
       - name: Build Native Messaging Host
-        # Ensure the browser extension helper is also built
         run: cargo build --release -p mdm-nmhost
 
       - name: Package Generic Linux tar.gz
