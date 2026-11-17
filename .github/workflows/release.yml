@@ -51,7 +51,6 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          # Note: The cache key will now just look for Cargo.lock in the checked-out upstream repo
           key: ${{ runner.os }}-cargo-x64v3-${{ hashFiles('Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-x64v3-
 
@@ -69,6 +68,10 @@ jobs:
           # Copy the compiled binaries
           cp target/release/misterdownloadmanager mdm-linux-x64v3/ 2>/dev/null || cp target/release/mdm mdm-linux-x64v3/
           cp target/release/misterdownloadmanager-nmhost mdm-linux-x64v3/ 2>/dev/null || true
+          
+          # Strip the debug symbols to drastically reduce file size
+          strip mdm-linux-x64v3/misterdownloadmanager 2>/dev/null || strip mdm-linux-x64v3/mdm
+          strip mdm-linux-x64v3/misterdownloadmanager-nmhost 2>/dev/null || true
           
           # Archive it into a generic tarball
           tar -czvf misterdownloadmanager-linux-x86_64-v3.tar.gz -C mdm-linux-x64v3 .
