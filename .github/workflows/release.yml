@@ -9,13 +9,14 @@ on:
       - "**/*.md"
   workflow_dispatch:
 
+# Required to allow the workflow to create and upload to GitHub Releases
 permissions:
   contents: write
 
 env:
   CARGO_TERM_COLOR: always
-  # Force Rust to compile strictly for modern x86-64-v3 instruction sets (AVX, AVX2, BMI1, BMI2, LZCNT, etc.)
-  RUSTFLAGS: "-C target-cpu=x86-64-v3 -C opt-level=3"
+  # Force x86-64-v3 instructions, max optimization, Link Time Optimization, single codegen unit, and abort on panic for minimum size.
+  RUSTFLAGS: "-C target-cpu=x86-64-v3 -C opt-level=3 -C lto=fat -C codegen-units=1 -C panic=abort"
   # Ensure any C/C++ build dependencies are also fully optimized for x86-64-v3
   CFLAGS: "-march=x86-64-v3 -O3"
   CXXFLAGS: "-march=x86-64-v3 -O3"
@@ -24,7 +25,8 @@ jobs:
   build-linux-generic:
     name: Build Linux tar.gz (x86-64-v3)
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # Increased timeout to 90 minutes because lto=fat and codegen-units=1 make the build process significantly longer
+    timeout-minutes: 90
 
     steps:
       - name: Checkout repository
@@ -51,8 +53,8 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-x64v3-${{ hashFiles('Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-x64v3-
+          key: ${{ runner.os }}-cargo-x64v3-lto-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-x64v3-lto-
 
       - name: Build Optimized Release Binary
         run: cargo build --release
@@ -82,3 +84,13 @@ jobs:
           name: misterdownloadmanager-linux-x86_64-v3
           path: misterdownloadmanager-linux-x86_64-v3.tar.gz
           if-no-files-found: error
+
+      - name: Publish to GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "build-${{ github.run_number }}"
+          name: "Optimized x64-v3 Build #${{ github.run_number }}"
+          body: "Automated Linux x86-64-v3 optimized release of MisterDownloadManager with LTO for size reduction, tracking the upstream main branch."
+          files: misterdownloadmanager-linux-x86_64-v3.tar.gz
+          draft: false
+          prerelease: false
