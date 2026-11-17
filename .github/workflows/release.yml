@@ -30,6 +30,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
+          repository: 'anefzaoui/misterdownloadmanager' # Pulls the actual source code
           persist-credentials: false
 
       - name: Install Linux build dependencies
@@ -50,6 +51,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
+          # Note: The cache key will now just look for Cargo.lock in the checked-out upstream repo
           key: ${{ runner.os }}-cargo-x64v3-${{ hashFiles('Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-x64v3-
 
@@ -65,7 +67,6 @@ jobs:
           mkdir -p mdm-linux-x64v3
           
           # Copy the compiled binaries
-          # (Adjust binary names if your Cargo.toml output name differs)
           cp target/release/misterdownloadmanager mdm-linux-x64v3/ 2>/dev/null || cp target/release/mdm mdm-linux-x64v3/
           cp target/release/misterdownloadmanager-nmhost mdm-linux-x64v3/ 2>/dev/null || true
           
