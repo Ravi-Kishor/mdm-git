@@ -1,81 +1,80 @@
-name: Build and Release Tarball
+name: Generic Linux Release (x86-64-v3)
 
 on:
   push:
-    tags:
-      - 'v*' # Triggers automatically on git tags (e.g., v0.5.2)
-  workflow_dispatch: # Enables manual triggering from the GitHub Actions tab
+    branches: [main]
+    paths-ignore:
+      - "website/**"
+      - "docs/**"
+      - "**/*.md"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  # Force Rust to compile strictly for modern x86-64-v3 instruction sets (AVX, AVX2, BMI1, BMI2, LZCNT, etc.)
+  RUSTFLAGS: "-C target-cpu=x86-64-v3 -C opt-level=3"
+  # Ensure any C/C++ build dependencies are also fully optimized for x86-64-v3
+  CFLAGS: "-march=x86-64-v3 -O3"
+  CXXFLAGS: "-march=x86-64-v3 -O3"
 
 jobs:
-  build-tarball:
+  build-linux-generic:
+    name: Build Linux tar.gz (x86-64-v3)
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
+    timeout-minutes: 60
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          persist-credentials: false
 
-      - name: Extract Git Version
-        id: get_version
-        run: |
-          GIT_DESCRIBE=$(git describe --tags --always | sed 's/^v//')
-          PKGVER=$(echo "$GIT_DESCRIBE" | sed 's/-/./g; s/-/r/')
-          echo "PKGVER=$PKGVER" >> $GITHUB_ENV
-          echo "Version: $PKGVER"
-
-      - name: Install System Dependencies
+      - name: Install Linux build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            cmake \
-            libclang-dev \
-            libgtk-3-dev \
-            libwebkit2gtk-4.1-dev \
-            libayatana-appindicator3-dev \
-            build-essential \
-            jq \
-            tar \
-            gzip
+          sudo apt-get install -y libgtk-3-dev libxkbcommon-dev libwayland-dev libgl1-mesa-dev \
+            libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev cmake libclang-dev nasm
 
-      - name: Install Rust Stable
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust Build Artifacts
-        uses: Swatinem/rust-cache@v2
-
-      - name: Build Release Binaries
+      - name: Setup Rust Toolchain
         run: |
-          cargo build --release
+          rustup update stable
+          rustup default stable
 
-      - name: Prepare Release Asset Bundle
-        env:
-          PKGVER: ${{ env.PKGVER }}
-        run: |
-          BUNDLE_DIR="MisterDownloadManager-${PKGVER}-linux-x86_64"
-          mkdir -p "$BUNDLE_DIR"
-
-          # Copy core binaries
-          cp target/release/misterdownloadmanager "$BUNDLE_DIR/"
-          [[ -f "target/release/misterdownloadmanager-nmhost" ]] && cp "target/release/misterdownloadmanager-nmhost" "$BUNDLE_DIR/"
-
-          # Copy browser extensions and docs if they exist
-          [[ -d "extension-chromium" ]] && cp -r extension-chromium "$BUNDLE_DIR/"
-          [[ -f "mdm-firefox.xpi" ]] && cp mdm-firefox.xpi "$BUNDLE_DIR/"
-          [[ -f "LICENSE" ]] && cp LICENSE "$BUNDLE_DIR/"
-          [[ -f "ATTRIBUTION.md" ]] && cp ATTRIBUTION.md "$BUNDLE_DIR/"
-
-          # Create tarball
-          tar -czvf "${BUNDLE_DIR}.tar.gz" "$BUNDLE_DIR"
-          echo "ARCHIVE_NAME=${BUNDLE_DIR}.tar.gz" >> $GITHUB_ENV
-
-      - name: Create GitHub Release and Upload Asset
-        uses: softprops/action-gh-release@v2
+      - name: Cache Cargo registry and target directory
+        uses: actions/cache@v4
         with:
-          files: |
-            ${{ env.ARCHIVE_NAME }}
-          generate_release_notes: true
-          draft: false
-          prerelease: false
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-x64v3-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-x64v3-
+
+      - name: Build Optimized Release Binary
+        run: cargo build --release
+
+      - name: Build Native Messaging Host
+        # Ensure the browser extension helper is also built
+        run: cargo build --release -p mdm-nmhost
+
+      - name: Package Generic Linux tar.gz
+        run: |
+          mkdir -p mdm-linux-x64v3
+          
+          # Copy the compiled binaries
+          # (Adjust binary names if your Cargo.toml output name differs)
+          cp target/release/misterdownloadmanager mdm-linux-x64v3/ 2>/dev/null || cp target/release/mdm mdm-linux-x64v3/
+          cp target/release/misterdownloadmanager-nmhost mdm-linux-x64v3/ 2>/dev/null || true
+          
+          # Archive it into a generic tarball
+          tar -czvf misterdownloadmanager-linux-x86_64-v3.tar.gz -C mdm-linux-x64v3 .
+
+      - name: Upload Package Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: misterdownloadmanager-linux-x86_64-v3
+          path: misterdownloadmanager-linux-x86_64-v3.tar.gz
+          if-no-files-found: error
