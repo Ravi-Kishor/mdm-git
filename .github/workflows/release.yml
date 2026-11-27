@@ -9,28 +9,31 @@ on:
       - "**/*.md"
   workflow_dispatch:
   schedule:
-    - cron: '0 0 * * *' # Triggers automatically every day at midnight UTC
+    - cron: "0 0 * * *" # Daily at midnight UTC (auto-skips if upstream is unchanged)
 
-# Required to allow the workflow to create and upload to GitHub Releases
 permissions:
   contents: write
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
-  
-  # Only apply the target architecture via RUSTFLAGS
-  RUSTFLAGS: "-C target-cpu=x86-64-v3"
-  
-  # Apply LTO, single codegen unit, and panic=abort via Cargo release profile overrides
-  # This prevents them from breaking proc-macros and build scripts
+
+  # Compiler & Linker (Clang + LLD with Safe ICF)
+  CC: clang
+  CXX: clang++
+  CFLAGS: "-march=x86-64-v3 -O2 -pipe -fno-plt"
+  CXXFLAGS: "-march=x86-64-v3 -O2 -pipe -fno-plt"
+  RUSTFLAGS: "-C target-cpu=x86-64-v3 -C linker=clang -C link-arg=-fuse-ld=lld -C link-arg=-Wl,-O2,--as-needed,--icf=safe"
+
+  # Cargo release profile overrides (avoids breaking proc-macros/build scripts)
   CARGO_PROFILE_RELEASE_LTO: "fat"
   CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "1"
   CARGO_PROFILE_RELEASE_PANIC: "abort"
-  CARGO_PROFILE_RELEASE_OPT_LEVEL: "3"
-  
-  # Ensure any C/C++ build dependencies are also fully optimized for x86-64-v3
-  CFLAGS: "-march=x86-64-v3 -O3"
-  CXXFLAGS: "-march=x86-64-v3 -O3"
+  CARGO_PROFILE_RELEASE_OPT_LEVEL: "2"
+  CARGO_PROFILE_RELEASE_STRIP: "symbols"
 
 jobs:
   build-linux-generic:
@@ -39,55 +42,99 @@ jobs:
     timeout-minutes: 90
 
     steps:
-      - name: Checkout repository
+      - name: Check upstream commit and existing release
+        id: check
+        run: |
+          set -euo pipefail
+          FULL_SHA=$(curl -fsSL \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/anefzaoui/misterdownloadmanager/commits/main" \
+            | jq -r '.sha')
+          test -n "$FULL_SHA" && test "$FULL_SHA" != "null"
+
+          SHORT_SHA="${FULL_SHA:0:7}"
+          echo "sha=${FULL_SHA}" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+
+          # Skip scheduled builds if a release for this upstream commit already exists
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            if curl -fsSL \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/${{ github.repository }}/releases?per_page=10" \
+              | jq -e --arg sha "$SHORT_SHA" '.[] | select(.tag_name | contains($sha))' >/dev/null; then
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              echo "Release for upstream commit ${SHORT_SHA} already exists. Skipping build."
+              exit 0
+            fi
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout upstream repository
+        if: steps.check.outputs.skip != 'true'
         uses: actions/checkout@v4
         with:
-          repository: 'anefzaoui/misterdownloadmanager' # Pulls the actual source code
+          repository: anefzaoui/misterdownloadmanager
+          ref: ${{ steps.check.outputs.sha }}
           persist-credentials: false
 
       - name: Install Linux build dependencies
+        if: steps.check.outputs.skip != 'true'
         run: |
+          set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libxkbcommon-dev libwayland-dev libgl1-mesa-dev \
-            libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev cmake libclang-dev nasm
+          sudo apt-get install -y --no-install-recommends \
+            clang lld pigz cmake nasm libclang-dev \
+            libgtk-3-dev libxkbcommon-dev libwayland-dev libgl1-mesa-dev \
+            libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
 
       - name: Setup Rust Toolchain
-        run: |
-          rustup update stable
-          rustup default stable
+        if: steps.check.outputs.skip != 'true'
+        uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache Cargo registry and target directory
-        uses: actions/cache@v4
+      - name: Cache Cargo registry and build artifacts
+        if: steps.check.outputs.skip != 'true'
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-x64v3-lto-${{ hashFiles('Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-x64v3-lto-
+          key: x64v3-fatlto-o2-lld
 
-      - name: Build Optimized Release Binary
-        run: cargo build --release
-
-      - name: Build Native Messaging Host
-        run: cargo build --release -p mdm-nmhost
+      - name: Build Optimized Release Binaries
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          cargo build --release --locked
+          cargo build --release --locked -p mdm-nmhost
 
       - name: Package Generic Linux tar.gz
+        if: steps.check.outputs.skip != 'true'
+        id: pkg
         run: |
+          set -euo pipefail
           mkdir -p mdm-linux-x64v3
-          
-          # Copy the compiled binaries
-          cp target/release/misterdownloadmanager mdm-linux-x64v3/ 2>/dev/null || cp target/release/mdm mdm-linux-x64v3/
-          cp target/release/misterdownloadmanager-nmhost mdm-linux-x64v3/ 2>/dev/null || true
-          
-          # Strip the debug symbols to drastically reduce file size
-          strip mdm-linux-x64v3/misterdownloadmanager 2>/dev/null || strip mdm-linux-x64v3/mdm
-          strip mdm-linux-x64v3/misterdownloadmanager-nmhost 2>/dev/null || true
-          
-          # Archive it into a generic tarball
-          tar -czvf misterdownloadmanager-linux-x86_64-v3.tar.gz -C mdm-linux-x64v3 .
+
+          if [ -f target/release/misterdownloadmanager ]; then
+            install -m755 target/release/misterdownloadmanager mdm-linux-x64v3/
+          elif [ -f target/release/mdm ]; then
+            install -m755 target/release/mdm mdm-linux-x64v3/
+          else
+            echo "Main binary not found in target/release" >&2
+            exit 1
+          fi
+
+          if [ -f target/release/misterdownloadmanager-nmhost ]; then
+            install -m755 target/release/misterdownloadmanager-nmhost mdm-linux-x64v3/
+          fi
+
+          # Final strip pass for any C/C++ static library symbols
+          llvm-strip --strip-all mdm-linux-x64v3/* 2>/dev/null || strip mdm-linux-x64v3/*
+
+          # High-ratio multi-threaded gzip compression (standard .tar.gz)
+          tar -I "pigz -9" -cf misterdownloadmanager-linux-x86_64-v3.tar.gz -C mdm-linux-x64v3 .
+          ls -lh mdm-linux-x64v3/ misterdownloadmanager-linux-x86_64-v3.tar.gz
 
       - name: Upload Package Artifact
+        if: steps.check.outputs.skip != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: misterdownloadmanager-linux-x86_64-v3
@@ -95,11 +142,18 @@ jobs:
           if-no-files-found: error
 
       - name: Publish to GitHub Releases
+        if: steps.check.outputs.skip != 'true'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: "build-${{ github.run_number }}"
-          name: "Optimized x64-v3 Build #${{ github.run_number }}"
-          body: "Automated Linux x86-64-v3 optimized release of MisterDownloadManager with LTO for size reduction, tracking the upstream main branch."
+          tag_name: "build-${{ github.run_number }}-${{ steps.check.outputs.short_sha }}"
+          name: "Optimized x64-v3 Build #${{ github.run_number }} (${{ steps.check.outputs.short_sha }})"
+          body: |
+            Automated Linux `x86-64-v3` optimized release of MisterDownloadManager built from upstream commit [`${{ steps.check.outputs.short_sha }}`](https://github.com/anefzaoui/misterdownloadmanager/commit/${{ steps.check.outputs.sha }}).
+
+            - **Flags:** `target-cpu=x86-64-v3`, `opt-level=2`, Fat LTO, `codegen-units=1`, `panic=abort`, Clang + LLD (`--icf=safe`), stripped
+            - **Archive:** `misterdownloadmanager-linux-x86_64-v3.tar.gz`
           files: misterdownloadmanager-linux-x86_64-v3.tar.gz
+          fail_on_unmatched_files: true
+          make_latest: true
           draft: false
           prerelease: false
